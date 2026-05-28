@@ -1,26 +1,116 @@
 @import "tailwindcss";
 
+/* ─── Class-based dark mode (toggled by adding .dark to <html>) ─── */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ─── Light mode tokens ─── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Backgrounds */
+  --bg-primary:   #FFFFFF;
+  --bg-secondary: #F7F7F5;
+  --bg-tertiary:  #EFEDE8;
+
+  /* Text */
+  --text-primary:   #1A1A1A;
+  --text-secondary: #6B6B6B;
+  --text-tertiary:  #9B9B9B;
+
+  /* Borders */
+  --border-default: #E5E3DE;
+  --border-hover:   #D1CFC9;
+
+  /* Brand (also overridden in dark) */
+  --brand-primary:   #1B7F6E;
+  --brand-secondary: #E8F5F2;
+  --brand-hover:     #155F52;
+
+  /* Accent / status */
+  --accent:  #F0A050;
+  --error:   #DC2626;
+  --success: #16A34A;
+
+  /* Elevation */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
+/* ─── Dark mode token overrides ─── */
+.dark {
+  --bg-primary:   #1C1C1C;
+  --bg-secondary: #242424;
+  --bg-tertiary:  #2C2C2C;
+
+  --text-primary:   #F0EFEC;
+  --text-secondary: #A8A6A0;
+  --text-tertiary:  #6B6966;
+
+  --border-default: #333330;
+  --border-hover:   #444440;
+
+  --brand-primary:   #2AA892;
+  --brand-secondary: #1A3530;
+  --brand-hover:     #248A78;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.30), 0 1px 2px rgba(0, 0, 0, 0.20);
+}
+
+/* ─── Register brand tokens with Tailwind (auto-update in dark) ─── */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-inter);
+
+  /* Brand colours — use var() so they flip with .dark */
+  --color-brand-primary:   var(--brand-primary);
+  --color-brand-secondary: var(--brand-secondary);
+  --color-brand-hover:     var(--brand-hover);
+  --color-accent:          var(--accent);
+  --color-error:           var(--error);
+  --color-success:         var(--success);
+
+  /* Custom font-size scale (14px base, denser than Tailwind default) */
+  --text-xs:   0.75rem;           /* 12px */
+  --text-sm:   0.8125rem;         /* 13px */
+  --text-base: 0.875rem;          /* 14px */
+  --text-md:   0.9375rem;         /* 15px — new step */
+  --text-lg:   1.125rem;          /* 18px */
+  --text-xl:   1.375rem;          /* 22px */
+  --text-2xl:  1.75rem;           /* 28px */
+  --text-3xl:  2.25rem;           /* 36px */
+
+  /* Line-height companions */
+  --text-xs--line-height:   1.6;
+  --text-sm--line-height:   1.6;
+  --text-base--line-height: 1.65;
+  --text-md--line-height:   1.6;
+  --text-lg--line-height:   1.4;
+  --text-xl--line-height:   1.25;
+  --text-2xl--line-height:  1.25;
+  --text-3xl--line-height:  1.2;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ─── Base styles ─── */
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+  line-height: 1.65;
+  /* Smooth light/dark transitions */
+  transition: background-color 150ms ease, color 150ms ease;
 }
+
+h1, h2, h3, h4 {
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+/* ─── Thin warm scrollbars ─── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-default) transparent;
+}
+::-webkit-scrollbar       { width: 5px; height: 5px; }
+::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 99px; }
+::-webkit-scrollbar-track { background: transparent; }

@@ -1,8 +1,3 @@
-from fastapi import FastAPI
+from mednotebook_backend.main import app
 
-app = FastAPI(title="MedNotebook API")
-
-
-@app.get("/")
-def root():
-    return {"status": "ok", "app": "MedNotebook API"}
+__all__ = ["app"]

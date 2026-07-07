@@ -80,18 +80,20 @@ def get_presigned_url(file_key: str, expires_in: int = 3600) -> str:
 def delete_file(file_key: str) -> bool:
     """Delete a file from S3. Returns False if the key didn't exist, True on success."""
     try:
+        # Check existence first — delete_object silently succeeds even for missing keys
+        _s3.head_object(Bucket=settings.aws_bucket_name, Key=file_key)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+            return False
+        logger.error("S3 head before delete failed for key %s: %s", file_key, exc)
+        raise AppException("File deletion failed", "S3_DELETE_FAILED", status_code=502) from exc
+
+    try:
         _s3.delete_object(Bucket=settings.aws_bucket_name, Key=file_key)
         return True
     except ClientError as exc:
-        error_code = exc.response.get("Error", {}).get("Code", "")
-        if error_code in ("NoSuchKey", "404"):
-            return False
         logger.error("S3 delete failed for key %s: %s", file_key, exc)
-        raise AppException(
-            "File deletion failed",
-            "S3_DELETE_FAILED",
-            status_code=502,
-        ) from exc
+        raise AppException("File deletion failed", "S3_DELETE_FAILED", status_code=502) from exc
 
 
 def get_file_size(file_key: str) -> int:

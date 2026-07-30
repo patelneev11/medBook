@@ -77,6 +77,23 @@ def get_presigned_url(file_key: str, expires_in: int = 3600) -> str:
         ) from exc
 
 
+def download_file(file_key: str) -> bytes:
+    """Download an object's raw bytes from S3."""
+    try:
+        response = _s3.get_object(Bucket=settings.aws_bucket_name, Key=file_key)
+        return response["Body"].read()
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code", "")
+        if error_code in ("404", "NoSuchKey"):
+            raise AppException(
+                f"File not found in storage: {file_key}",
+                "S3_FILE_NOT_FOUND",
+                status_code=404,
+            ) from exc
+        logger.error("S3 download failed for key %s: %s", file_key, exc)
+        raise AppException("File download failed", "S3_DOWNLOAD_FAILED", status_code=502) from exc
+
+
 def delete_file(file_key: str) -> bool:
     """Delete a file from S3. Returns False if the key didn't exist, True on success."""
     try:

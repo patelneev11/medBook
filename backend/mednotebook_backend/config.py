@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     # ── AI ────────────────────────────────────────────────────────────────────
     anthropic_api_key: str = ""
 
+    # ── Background jobs ───────────────────────────────────────────────────────
+    # Redis, used as both the Celery broker and result backend
+    redis_url: str = "redis://localhost:6379/0"
+
     # ── App behaviour ─────────────────────────────────────────────────────────
     # "development" | "staging" | "production"
     environment: str = "development"

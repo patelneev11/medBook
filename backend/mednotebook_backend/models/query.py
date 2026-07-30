@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -15,17 +16,17 @@ class AIQuery(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    project_id: Mapped[uuid.UUID | None] = mapped_column(
+    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
     )
     question: Mapped[str] = mapped_column(Text, nullable=False)
-    answer: Mapped[str | None] = mapped_column(Text, nullable=True)
-    sources: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sources: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     model_used: Mapped[str] = mapped_column(
         String(100), default="claude-sonnet-4-20250514", nullable=False
     )
-    tokens_used: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    response_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_used: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    response_time_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship("User", back_populates="queries")

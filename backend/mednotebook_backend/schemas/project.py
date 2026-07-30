@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -8,7 +9,7 @@ from ..models.project import MemberRole
 
 class ProjectBase(BaseModel):
     name: str = Field(..., max_length=100)
-    description: str | None = None
+    description: Optional[str] = None
     color: str = "#1B7F6E"
 
 
@@ -17,9 +18,9 @@ class ProjectCreate(ProjectBase):
 
 
 class ProjectUpdate(BaseModel):
-    name: str | None = Field(default=None, max_length=100)
-    description: str | None = None
-    color: str | None = None
+    name: Optional[str] = Field(default=None, max_length=100)
+    description: Optional[str] = None
+    color: Optional[str] = None
 
 
 class ProjectResponse(ProjectBase):

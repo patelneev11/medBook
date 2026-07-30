@@ -1,12 +1,13 @@
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
 
 class QueryBase(BaseModel):
     question: str = Field(..., min_length=1)
-    project_id: uuid.UUID | None = None
+    project_id: Optional[uuid.UUID] = None
 
 
 class QueryCreate(QueryBase):
@@ -14,18 +15,18 @@ class QueryCreate(QueryBase):
 
 
 class QueryUpdate(BaseModel):
-    question: str | None = Field(default=None, min_length=1)
-    project_id: uuid.UUID | None = None
+    question: Optional[str] = Field(default=None, min_length=1)
+    project_id: Optional[uuid.UUID] = None
 
 
 class QueryResponse(QueryBase):
     id: uuid.UUID
     user_id: uuid.UUID
-    answer: str | None
-    sources: list | None
+    answer: Optional[str]
+    sources: Optional[list]
     model_used: str
-    tokens_used: int | None
-    response_time_ms: int | None
+    tokens_used: Optional[int]
+    response_time_ms: Optional[int]
     created_at: datetime
 
     model_config = {"from_attributes": True}

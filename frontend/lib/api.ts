@@ -9,7 +9,9 @@ function getToken(): string | null {
 function clearAuth() {
   if (typeof window === "undefined") return;
   localStorage.removeItem("auth_token");
-  window.location.href = "/login";
+  // Dispatch event so ToastProvider can show a toast before the redirect
+  window.dispatchEvent(new CustomEvent("mednotebook:session-expired"));
+  setTimeout(() => { window.location.href = "/login"; }, 1500);
 }
 
 async function request<T>(

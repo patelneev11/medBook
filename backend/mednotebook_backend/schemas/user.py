@@ -1,12 +1,13 @@
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, EmailStr, field_validator
 
 from ..models.user import UserRole
 
 
-def _validate_password(v: str | None) -> str | None:
+def _validate_password(v: Optional[str]) -> Optional[str]:
     if v is None:
         return v
     if len(v) < 8:
@@ -31,13 +32,13 @@ class UserCreate(UserBase):
 
 
 class UserUpdate(BaseModel):
-    full_name: str | None = None
-    email: EmailStr | None = None
-    password: str | None = None
+    full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    password: Optional[str] = None
 
     @field_validator("password")
     @classmethod
-    def validate_password(cls, v: str | None) -> str | None:
+    def validate_password(cls, v: Optional[str]) -> Optional[str]:
         return _validate_password(v)
 
 

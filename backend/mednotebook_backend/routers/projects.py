@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +28,7 @@ def _now() -> datetime:
 def _placeholder_project(
     project_id: uuid.UUID = _PLACEHOLDER_PROJECT,
     name: str = "My Project",
-    description: str | None = None,
+    description: Optional[str] = None,
     color: str = "#1B7F6E",
 ) -> ProjectResponse:
     now = _now()

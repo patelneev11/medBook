@@ -1,9 +1,10 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { Search, Bell, Menu } from "lucide-react";
+import { Search, Bell, Menu, Upload } from "lucide-react";
 import { ApiStatus } from "@/components/ui/ApiStatus";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
+import { useUpload } from "@/context/UploadContext";
 
 const pageTitles: Record<string, string> = {
   "/dashboard":           "Dashboard",
@@ -20,6 +21,7 @@ interface TopBarProps {
 export function TopBar({ onMenuClick }: TopBarProps) {
   const pathname = usePathname();
   const title = pageTitles[pathname] ?? "MedNotebook";
+  const { openUpload } = useUpload();
 
   return (
     <header
@@ -57,6 +59,15 @@ export function TopBar({ onMenuClick }: TopBarProps) {
 
       {/* Right actions */}
       <div className="ml-auto flex items-center gap-2">
+        <button
+          onClick={() => openUpload()}
+          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors hover:opacity-90"
+          style={{ backgroundColor: "var(--brand-primary)" }}
+          aria-label="Upload document"
+        >
+          <Upload size={13} />
+          <span className="hidden sm:inline">Upload</span>
+        </button>
         <ApiStatus />
         <ThemeToggle />
         <button

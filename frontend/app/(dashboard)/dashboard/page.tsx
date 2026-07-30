@@ -1,6 +1,9 @@
+"use client";
+
 import { FileText, Folder, Sparkles, HardDrive, Clock } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { useUpload } from "@/context/UploadContext";
 
 const stats = [
   { label: "Total documents", value: "0",    icon: FileText },
@@ -10,6 +13,8 @@ const stats = [
 ];
 
 export default function DashboardPage() {
+  const { openUpload } = useUpload();
+
   return (
     <div className="space-y-8">
 
@@ -57,7 +62,11 @@ export default function DashboardPage() {
               Upload a PDF, CSV, or text file to get started
             </p>
             <div className="mt-5">
-              <Button label="Upload your first document" variant="primary" />
+              <Button
+                label="Upload your first document"
+                variant="primary"
+                onClick={openUpload}
+              />
             </div>
           </Card>
         </div>
@@ -91,7 +100,7 @@ export default function DashboardPage() {
           Quick actions
         </h2>
         <div className="flex flex-wrap gap-3">
-          <Button label="Upload document" variant="primary" />
+          <Button label="Upload document" variant="primary"    onClick={openUpload} />
           <Button label="New project"     variant="secondary" />
           <Button label="Ask AI"          variant="secondary" />
         </div>

@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { Sun, Moon } from "lucide-react";
 
 export function ThemeToggle() {
   const [dark, setDark] = useState(false);
 
-  // Read saved preference after hydration — must not run on the server or the
-  // initial client render, otherwise the icon/aria-label won't match SSR output.
-  useEffect(() => {
+  // useLayoutEffect is skipped on the server (no SSR mismatch) and runs
+  // synchronously before paint on the client (no theme flicker).
+  useLayoutEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (localStorage.getItem("mednotebook-theme") === "dark") setDark(true);
   }, []);
 

@@ -4,6 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, computed_field, field_validator
 
+from ..models.chunk import ChunkType
 from ..models.document import DocumentStatus
 from ..services.file_validator import get_mime_type_label
 
@@ -41,7 +42,12 @@ class DocumentResponse(DocumentBase):
     status: DocumentStatus
     page_count: Optional[int]
     word_count: Optional[int]
+    chunk_count: Optional[int]
+    extraction_method: Optional[str]
     summary: Optional[str]
+    error_message: Optional[str]
+    processing_started_at: Optional[datetime]
+    processing_completed_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
 
@@ -53,11 +59,23 @@ class DocumentResponse(DocumentBase):
     model_config = {"from_attributes": True}
 
 
+class DocumentDetailResponse(DocumentResponse):
+    """Everything DocumentResponse has, plus the extras only the detail
+    panel needs — a resolved uploader name and a text preview — so the
+    list endpoint doesn't pay for a join/preview lookup it doesn't use.
+    """
+    uploaded_by_name: Optional[str] = None
+    extracted_text_preview: Optional[str] = None
+
+
 class DocumentStatusResponse(BaseModel):
     id: uuid.UUID
     status: DocumentStatus
     progress_percent: int
     error_message: Optional[str] = None
+    word_count: Optional[int] = None
+    page_count: Optional[int] = None
+    chunk_count: Optional[int] = None
 
 
 # ── Chunks ────────────────────────────────────────────────────────────────────
@@ -65,6 +83,7 @@ class DocumentStatusResponse(BaseModel):
 class ChunkBase(BaseModel):
     content: str
     chunk_index: int
+    chunk_type: Optional[ChunkType] = None
     page_number: Optional[int] = None
     token_count: Optional[int] = None
 

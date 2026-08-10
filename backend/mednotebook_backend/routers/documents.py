@@ -3,13 +3,21 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
-from sqlalchemy import and_, select
+from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..exceptions import AppException
+from ..models.chunk import DocumentChunk
 from ..models.document import Document, DocumentStatus
-from ..schemas.document import ChunkResponse, DocumentResponse, DocumentStatusResponse, DocumentUpdate
+from ..models.user import User
+from ..schemas.document import (
+    ChunkResponse,
+    DocumentDetailResponse,
+    DocumentResponse,
+    DocumentStatusResponse,
+    DocumentUpdate,
+)
 from ..services import file_validator
 from ..services import storage as storage_service
 from tasks.document_tasks import process_document
@@ -22,6 +30,7 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 _PLACEHOLDER_USER = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 _SUPPORTED_TYPES = ", ".join(sorted(file_validator.ALLOWED_TYPES.keys()))
+_TEXT_PREVIEW_CHARS = 500
 
 # No per-step progress instrumentation yet — coarse mapping until the real
 # extraction pipeline reports granular progress.
@@ -141,9 +150,31 @@ async def upload_document(
 
 # ── Single document ───────────────────────────────────────────────────────────
 
-@router.get("/{document_id}", response_model=DocumentResponse)
+@router.get("/{document_id}", response_model=DocumentDetailResponse)
 async def get_document(document_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    return await _get_or_404(document_id, db)
+    doc = await _get_or_404(document_id, db)
+
+    uploader_name = None
+    user_result = await db.execute(select(User.full_name).where(User.id == doc.uploaded_by))
+    uploader_name = user_result.scalar_one_or_none()
+
+    preview = None
+    if doc.status == DocumentStatus.ready:
+        chunk_result = await db.execute(
+            select(DocumentChunk.content)
+            .where(DocumentChunk.document_id == document_id)
+            .order_by(DocumentChunk.chunk_index)
+            .limit(1)
+        )
+        first_chunk_content = chunk_result.scalar_one_or_none()
+        if first_chunk_content:
+            preview = first_chunk_content[:_TEXT_PREVIEW_CHARS]
+
+    return DocumentDetailResponse(
+        **DocumentResponse.model_validate(doc).model_dump(),
+        uploaded_by_name=uploader_name,
+        extracted_text_preview=preview,
+    )
 
 
 @router.get("/{document_id}/status", response_model=DocumentStatusResponse)
@@ -153,8 +184,35 @@ async def get_document_status(document_id: uuid.UUID, db: AsyncSession = Depends
         id=doc.id,
         status=doc.status,
         progress_percent=_PROGRESS_BY_STATUS[doc.status],
-        error_message=None,
+        error_message=doc.error_message,
+        word_count=doc.word_count,
+        page_count=doc.page_count,
+        chunk_count=doc.chunk_count,
     )
+
+
+@router.post("/{document_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+async def retry_document(document_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    doc = await _get_or_404(document_id, db)
+    if doc.status != DocumentStatus.error:
+        raise AppException(
+            "Only documents with status 'error' can be retried",
+            "INVALID_STATUS_FOR_RETRY",
+            400,
+        )
+    if doc.file_key.startswith("pending/"):
+        raise AppException("File was never uploaded to storage — cannot retry", "FILE_NOT_READY", 400)
+
+    doc.status = DocumentStatus.pending
+    doc.error_message = None
+    doc.processing_started_at = None
+    doc.chunk_count = 0
+
+    await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
+    await db.commit()
+
+    process_document.delay(str(doc.id))
+    return {"message": "Processing restarted"}
 
 
 @router.patch("/{document_id}", response_model=DocumentResponse)
@@ -205,10 +263,19 @@ async def view_document(document_id: uuid.UUID, db: AsyncSession = Depends(get_d
 # ── Chunks ────────────────────────────────────────────────────────────────────
 
 @router.get("/{document_id}/chunks", response_model=list[ChunkResponse])
-async def list_chunks(document_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def list_chunks(
+    document_id: uuid.UUID,
+    limit: int = Query(10, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
     await _get_or_404(document_id, db)
-    # TODO: load chunks from DB — Session 5
-    return []
+    result = await db.execute(
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document_id)
+        .order_by(DocumentChunk.chunk_index)
+        .limit(limit)
+    )
+    return result.scalars().all()
 
 
 # ── Summarize ─────────────────────────────────────────────────────────────────

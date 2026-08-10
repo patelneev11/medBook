@@ -9,84 +9,28 @@ import {
 } from "react";
 import {
   Upload,
-  FileText,
-  FileSpreadsheet,
-  FileJson,
-  Image as ImageIcon,
-  File as FileIcon,
-  MoreHorizontal,
   ChevronLeft,
   ChevronRight,
   AlertCircle,
+  AlertTriangle,
   RefreshCw,
-  Trash2,
-  Download,
-  Eye,
-  Sparkles,
-  FolderInput,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
-import { Spinner } from "@/components/ui/Spinner";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { DocumentViewer } from "@/components/documents/DocumentViewer";
+import { DocumentCard } from "@/components/documents/DocumentCard";
+import { DocumentDetailPanel } from "@/components/documents/DocumentDetailPanel";
 import { useUpload } from "@/context/UploadContext";
 import { useToast } from "@/context/ToastContext";
 import { api } from "@/lib/api";
+import { classifyMime, matchesType } from "@/lib/documentDisplay";
 import type { Document } from "@/types/document";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const PER_PAGE = 20;
-const POLL_INTERVAL_MS = 3000;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatBytes(bytes: number | null): string {
-  if (bytes == null) return "—";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function formatDate(iso: string): string {
-  const date = new Date(iso);
-  const diffMs = Date.now() - date.getTime();
-  const diffH = diffMs / 3_600_000;
-  const diffD = diffMs / 86_400_000;
-  if (diffH < 1) return "Just now";
-  if (diffH < 24) return `${Math.floor(diffH)}h ago`;
-  if (diffD < 2) return "Yesterday";
-  if (diffD < 7) return `${Math.floor(diffD)} days ago`;
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-type FileClass = "pdf" | "spreadsheet" | "image" | "json" | "text" | "other";
-
-function classifyMime(mime: string | null): FileClass {
-  if (!mime) return "other";
-  if (mime === "application/pdf") return "pdf";
-  if (mime.includes("spreadsheet") || mime.includes("excel") || mime === "text/csv")
-    return "spreadsheet";
-  if (mime.startsWith("image/")) return "image";
-  if (mime === "application/json") return "json";
-  if (mime === "text/plain" || mime === "text/markdown") return "text";
-  return "other";
-}
-
-const FILE_STYLES: Record<FileClass, { icon: React.ElementType; bg: string; color: string }> = {
-  pdf:         { icon: FileText,        bg: "#FEF2F2",                color: "#DC2626" },
-  spreadsheet: { icon: FileSpreadsheet, bg: "var(--brand-secondary)", color: "var(--brand-primary)" },
-  image:       { icon: ImageIcon,       bg: "#EFF6FF",                color: "#2563EB" },
-  json:        { icon: FileJson,        bg: "#FFFBEB",                color: "#D97706" },
-  text:        { icon: FileText,        bg: "var(--bg-tertiary)",      color: "var(--text-secondary)" },
-  other:       { icon: FileIcon,        bg: "var(--bg-tertiary)",      color: "var(--text-secondary)" },
-};
-
-function matchesType(doc: Document, filter: string): boolean {
-  if (!filter) return true;
-  return classifyMime(doc.mime_type) === filter;
-}
 
 function applySort(docs: Document[], sort: string): Document[] {
   const copy = [...docs];
@@ -122,158 +66,6 @@ function SkeletonCard() {
   );
 }
 
-// ─── Status badge ─────────────────────────────────────────────────────────────
-
-function StatusBadge({ status }: { status: Document["status"] }) {
-  if (status === "ready") return <Badge label="Ready" variant="green" />;
-  if (status === "error") return <Badge label="Failed" variant="red" />;
-  return (
-    <span
-      className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium"
-      style={{ backgroundColor: "#EFF6FF", color: "#2563EB" }}
-    >
-      <Spinner size="sm" className="h-3 w-3" />
-      Processing
-    </span>
-  );
-}
-
-// ─── Document card ────────────────────────────────────────────────────────────
-
-interface DocumentCardProps {
-  doc: Document;
-  menuOpenId: string | null;
-  onMenuToggle: (id: string) => void;
-  onView: (doc: Document) => void;
-  onDownload: (doc: Document) => void;
-  onDeleteRequest: (doc: Document) => void;
-}
-
-function DocumentCard({
-  doc,
-  menuOpenId,
-  onMenuToggle,
-  onView,
-  onDownload,
-  onDeleteRequest,
-}: DocumentCardProps) {
-  const cls = classifyMime(doc.mime_type);
-  const { icon: Icon, bg, color } = FILE_STYLES[cls];
-  const name = doc.display_name ?? doc.filename;
-  const menuOpen = menuOpenId === doc.id;
-  const isViewable = cls === "pdf" || cls === "image";
-
-  return (
-    <div
-      className="group relative flex flex-col gap-3 rounded-xl border p-5 transition-shadow hover:shadow-md"
-      style={{ backgroundColor: "var(--bg-primary)", borderColor: "var(--border-default)" }}
-    >
-      {/* File type icon */}
-      <div
-        className="flex h-10 w-10 items-center justify-center rounded-lg"
-        style={{ backgroundColor: bg }}
-      >
-        <Icon size={20} style={{ color }} />
-      </div>
-
-      {/* Three-dot button — appears on hover */}
-      <div className="absolute right-3 top-3">
-        <button
-          onClick={(e) => { e.stopPropagation(); onMenuToggle(doc.id); }}
-          className="flex h-7 w-7 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100"
-          style={{ color: "var(--text-secondary)" }}
-          aria-label="Document options"
-          aria-expanded={menuOpen}
-        >
-          <MoreHorizontal size={15} />
-        </button>
-
-        {/* Dropdown */}
-        {menuOpen && (
-          <div
-            className="absolute right-0 top-8 z-20 w-44 overflow-hidden rounded-lg border py-1 shadow-lg"
-            style={{ backgroundColor: "var(--bg-primary)", borderColor: "var(--border-default)" }}
-          >
-            {isViewable && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onMenuToggle(doc.id); onView(doc); }}
-                className="flex w-full items-center gap-2.5 px-3 py-2 text-sm transition-colors hover:bg-[var(--bg-secondary)]"
-                style={{ color: "var(--text-primary)" }}
-              >
-                <Eye size={14} style={{ color: "var(--text-tertiary)" }} />
-                View
-              </button>
-            )}
-            <button
-              onClick={(e) => { e.stopPropagation(); onMenuToggle(doc.id); onDownload(doc); }}
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-sm transition-colors hover:bg-[var(--bg-secondary)]"
-              style={{ color: "var(--text-primary)" }}
-            >
-              <Download size={14} style={{ color: "var(--text-tertiary)" }} />
-              Download
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); onMenuToggle(doc.id); }}
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-sm transition-colors hover:bg-[var(--bg-secondary)]"
-              style={{ color: "var(--text-primary)" }}
-            >
-              <Sparkles size={14} style={{ color: "var(--text-tertiary)" }} />
-              Summarize
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); onMenuToggle(doc.id); }}
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-sm transition-colors hover:bg-[var(--bg-secondary)]"
-              style={{ color: "var(--text-primary)" }}
-            >
-              <FolderInput size={14} style={{ color: "var(--text-tertiary)" }} />
-              Move to project
-            </button>
-            <div className="my-1 border-t" style={{ borderColor: "var(--border-default)" }} />
-            <button
-              onClick={(e) => { e.stopPropagation(); onMenuToggle(doc.id); onDeleteRequest(doc); }}
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-sm transition-colors hover:bg-[#FEF2F2]"
-              style={{ color: "var(--error)" }}
-            >
-              <Trash2 size={14} />
-              Delete
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Filename */}
-      <p
-        className="text-sm font-semibold leading-snug"
-        style={{
-          color: "var(--text-primary)",
-          display: "-webkit-box",
-          WebkitLineClamp: 2,
-          WebkitBoxOrient: "vertical",
-          overflow: "hidden",
-        }}
-        title={name}
-      >
-        {name}
-      </p>
-
-      {/* Meta */}
-      <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-        {formatBytes(doc.file_size_bytes)} · {formatDate(doc.created_at)}
-      </p>
-
-      {/* Status + project */}
-      <div className="mt-auto flex items-center justify-between gap-2">
-        <StatusBadge status={doc.status} />
-        {doc.project_id && (
-          <span className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
-            {doc.project_id}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
 function EmptyState({ onUpload }: { onUpload: () => void }) {
@@ -294,6 +86,38 @@ function EmptyState({ onUpload }: { onUpload: () => void }) {
       <div className="mt-6">
         <Button label="Upload document" variant="primary" onClick={onUpload} />
       </div>
+    </div>
+  );
+}
+
+// ─── Failed documents banner ────────────────────────────────────────────────
+
+function FailedDocsBanner({
+  count,
+  retrying,
+  onRetryAll,
+}: {
+  count: number;
+  retrying: boolean;
+  onRetryAll: () => void;
+}) {
+  return (
+    <div
+      className="flex items-center justify-between gap-3 rounded-lg border px-4 py-3"
+      style={{ backgroundColor: "#FEF2F2", borderColor: "var(--error)" }}
+    >
+      <div className="flex items-center gap-2.5">
+        <AlertTriangle size={16} style={{ color: "var(--error)" }} />
+        <span className="text-sm font-medium" style={{ color: "var(--error)" }}>
+          {count} documents failed to process
+        </span>
+      </div>
+      <Button
+        label={retrying ? "Retrying…" : "Retry all"}
+        variant="secondary"
+        loading={retrying}
+        onClick={onRetryAll}
+      />
     </div>
   );
 }
@@ -322,7 +146,9 @@ export default function DocumentsPage() {
   // ── UI state ──────────────────────────────────────────────────────────────
   const [menuOpenId, setMenuOpenId]       = useState<string | null>(null);
   const [viewDoc, setViewDoc]             = useState<Document | null>(null);
+  const [detailDoc, setDetailDoc]         = useState<Document | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Document | null>(null);
+  const [retryingAll, setRetryingAll]     = useState(false);
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
   const fetchDocs = useCallback(async (p: number) => {
@@ -352,31 +178,45 @@ export default function DocumentsPage() {
     }
   }, [uploadedCount, fetchDocs]);
 
-  // ── Polling for processing docs ───────────────────────────────────────────
-  const docsRef = useRef<Document[]>([]);
-  useEffect(() => { docsRef.current = docs; }, [docs]);
-
-  useEffect(() => {
-    const timer = setInterval(async () => {
-      const processing = docsRef.current.filter(
-        (d) => d.status === "pending" || d.status === "processing"
-      );
-      if (processing.length === 0) return;
-
-      const results = await Promise.all(
-        processing.map((d) => api.get<Document>(`/documents/${d.id}`).catch(() => null))
-      );
-
-      setDocs((prev) =>
-        prev.map((d) => {
-          const updated = results.find((r) => r?.id === d.id);
-          return updated ?? d;
-        })
-      );
-    }, POLL_INTERVAL_MS);
-
-    return () => clearInterval(timer);
+  // Per-card status polling (see DocumentCard/useDocumentStatus) reports
+  // updates back here so search/sort/the detail panel stay in sync.
+  const handleDocumentUpdate = useCallback((id: string, patch: Partial<Document>) => {
+    setDocs((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
   }, []);
+
+  const errorCount = useMemo(() => docs.filter((d) => d.status === "error").length, [docs]);
+
+  const handleRetryAll = useCallback(async () => {
+    const failedDocs = docs.filter((d) => d.status === "error");
+    if (failedDocs.length === 0) return;
+
+    setRetryingAll(true);
+    let succeeded = 0;
+    let failed = 0;
+
+    for (let i = 0; i < failedDocs.length; i++) {
+      const doc = failedDocs[i];
+      try {
+        await api.post(`/documents/${doc.id}/retry`, {});
+        toast.info(`Reprocessing ${doc.display_name ?? doc.filename}...`);
+        handleDocumentUpdate(doc.id, { status: "pending", error_message: null, chunk_count: 0 });
+        succeeded += 1;
+      } catch {
+        failed += 1;
+      }
+      // Stagger requests so we don't hammer the server retrying a bunch at once.
+      if (i < failedDocs.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+
+    setRetryingAll(false);
+    if (failed === 0) {
+      toast.success(`Retrying ${succeeded} document${succeeded === 1 ? "" : "s"}`);
+    } else {
+      toast.error(`Retried ${succeeded} of ${failedDocs.length} documents`, `${failed} could not be retried.`);
+    }
+  }, [docs, toast, handleDocumentUpdate]);
 
   // ── Close menu on outside click ───────────────────────────────────────────
   useEffect(() => {
@@ -448,6 +288,11 @@ export default function DocumentsPage() {
   return (
     <>
       <div className="space-y-6">
+
+        {/* Failed documents banner */}
+        {!loading && !error && errorCount > 1 && (
+          <FailedDocsBanner count={errorCount} retrying={retryingAll} onRetryAll={handleRetryAll} />
+        )}
 
         {/* Filter bar */}
         <div className="flex flex-wrap items-center gap-3">
@@ -559,6 +404,8 @@ export default function DocumentsPage() {
                 onView={handleView}
                 onDownload={handleDownload}
                 onDeleteRequest={(doc) => { setMenuOpenId(null); setConfirmDelete(doc); }}
+                onOpenDetail={setDetailDoc}
+                onDocumentUpdate={handleDocumentUpdate}
               />
             ))}
           </div>
@@ -597,6 +444,14 @@ export default function DocumentsPage() {
           doc={viewDoc}
           onClose={() => setViewDoc(null)}
           onDownload={handleDownload}
+        />
+      )}
+
+      {/* Document detail panel */}
+      {detailDoc && (
+        <DocumentDetailPanel
+          doc={detailDoc}
+          onClose={() => setDetailDoc(null)}
         />
       )}
 

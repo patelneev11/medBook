@@ -37,7 +37,12 @@ class Document(Base):
     )
     page_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     word_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    chunk_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    extraction_method: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    processing_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    processing_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

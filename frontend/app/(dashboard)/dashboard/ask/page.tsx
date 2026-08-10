@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Sparkles, Send, BookOpen } from "lucide-react";
 
 const EXAMPLE_QUESTIONS = [
@@ -12,7 +13,20 @@ const EXAMPLE_QUESTIONS = [
 const HAS_DOCUMENTS = false;
 
 export default function AskAIPage() {
-  const [input, setInput] = useState("");
+  return (
+    <Suspense fallback={null}>
+      <AskAIPageContent />
+    </Suspense>
+  );
+}
+
+function AskAIPageContent() {
+  const searchParams = useSearchParams();
+  // Pre-filled when arriving from a document's detail panel — the actual
+  // AI wiring (using document_id as context) is Session 7; for now this
+  // just carries the question text and which document prompted it.
+  const [input, setInput] = useState(() => searchParams.get("q") ?? "");
+  const documentName = searchParams.get("document_name");
   const canSend = HAS_DOCUMENTS && input.trim().length > 0;
 
   return (
@@ -26,7 +40,9 @@ export default function AskAIPage() {
           className="shrink-0 rounded-lg border px-4 py-2 text-xs"
           style={{ backgroundColor: "var(--brand-secondary)", borderColor: "var(--brand-primary)", color: "var(--brand-primary)", opacity: 0.9 }}
         >
-          Answers are based on your uploaded documents only
+          {documentName
+            ? `Asking about "${documentName}" — answers are based on your uploaded documents only`
+            : "Answers are based on your uploaded documents only"}
         </div>
 
         {/* Messages */}

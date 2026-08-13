@@ -16,7 +16,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Optional, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, Optional, Union
 
 import anthropic
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +34,10 @@ MAX_ITERATIONS = 10
 # Enough excerpt to show the user why a citation was made, not the whole chunk.
 CITATION_EXCERPT_CHARS = 400
 RESULT_SUMMARY_CHARS = 160
+# Answer text is emitted to the client in pieces this size, split on
+# whitespace — large enough not to flood the SSE channel, small enough to
+# render progressively.
+ANSWER_CHUNK_CHARS = 90
 
 OnStep = Callable[[dict], Union[None, Awaitable[None]]]
 
@@ -97,6 +101,35 @@ class AgentOrchestrator:
         project_id: Optional[str] = None,
         on_step: Optional[OnStep] = None,
     ) -> AgentResponse:
+        """Run to completion, firing `on_step` for each progress event.
+
+        Thin wrapper over `stream()` so the streaming and non-streaming API
+        modes cannot drift apart.
+        """
+        response: Optional[AgentResponse] = None
+        async for event in self.stream(question, conversation_history, project_id):
+            if event["type"] == "final":
+                response = event["response"]
+            elif event["type"] not in ("answer_start", "answer_chunk"):
+                await _emit(on_step, event)
+        assert response is not None  # stream() always ends with a final event
+        return response
+
+    async def stream(
+        self,
+        question: str,
+        conversation_history: Optional[list[dict]] = None,
+        project_id: Optional[str] = None,
+    ) -> AsyncIterator[dict]:
+        """Yield progress events as the agent works, ending with a single
+        `{"type": "final", "response": AgentResponse}` event.
+
+        Note on `answer_chunk`: the answer is chunked here after Claude's
+        final message completes, not token-streamed from the API. A turn's
+        text can only be classified as narration-before-a-tool-call vs. the
+        real answer once the turn ends, and mislabeling it would either dump
+        "let me check..." into the answer or stream the answer as thinking.
+        """
         started = time.perf_counter()
 
         messages: list[dict] = list(conversation_history or [])
@@ -132,10 +165,7 @@ class AgentOrchestrator:
             # final answer so citations aren't diluted by "let me check...".
             if text_this_turn:
                 answer = text_this_turn  # fallback if the loop ends early
-                await _emit(
-                    on_step,
-                    {"type": "thinking", "text": text_this_turn, "step": iterations},
-                )
+                yield {"type": "thinking", "message": text_this_turn, "step": iterations}
 
             tool_uses = [block for block in response.content if block.type == "tool_use"]
 
@@ -143,17 +173,14 @@ class AgentOrchestrator:
                 # Stop before executing another round of tools: the next
                 # Claude call would just ask for more.
                 truncated = True
-                await _emit(
-                    on_step,
-                    {
-                        "type": "max_iterations",
-                        "step": iterations,
-                        "message": (
-                            "This question needed more research steps than allowed in a single "
-                            "turn — answering with what has been gathered so far."
-                        ),
-                    },
-                )
+                yield {
+                    "type": "max_iterations",
+                    "step": iterations,
+                    "message": (
+                        "This question needed more research steps than allowed in a single "
+                        "turn — answering with what has been gathered so far."
+                    ),
+                }
                 break
 
             messages.append({"role": "assistant", "content": response.content})
@@ -164,15 +191,12 @@ class AgentOrchestrator:
                 input_summary = summarize_input(
                     block.name, tool_input, self.tool_executor.accessed_documents
                 )
-                await _emit(
-                    on_step,
-                    {
-                        "type": "tool_call",
-                        "tool": block.name,
-                        "input_summary": input_summary,
-                        "step": iterations,
-                    },
-                )
+                yield {
+                    "type": "tool_call",
+                    "tool": block.name,
+                    "message": input_summary,
+                    "step": iterations,
+                }
 
                 tool_started = time.perf_counter()
                 result = await self.tool_executor.execute(block.name, tool_input)
@@ -187,16 +211,13 @@ class AgentOrchestrator:
                         execution_time_ms=elapsed_ms,
                     )
                 )
-                await _emit(
-                    on_step,
-                    {
-                        "type": "tool_result",
-                        "tool": block.name,
-                        "result_summary": result_summary,
-                        "execution_time_ms": elapsed_ms,
-                        "step": iterations,
-                    },
-                )
+                yield {
+                    "type": "tool_result",
+                    "tool": block.name,
+                    "message": result_summary,
+                    "execution_time_ms": elapsed_ms,
+                    "step": iterations,
+                }
 
                 tool_results.append(
                     {
@@ -221,16 +242,23 @@ class AgentOrchestrator:
                 "Try narrowing it — for example, ask about one document or one metric at a time."
             )
 
-        return AgentResponse(
-            answer=answer,
-            citations=self._build_citations(answer),
-            tool_calls=tool_calls,
-            total_iterations=iterations,
-            documents_accessed=list(self.tool_executor.accessed_documents),
-            tokens_used=tokens_used,
-            response_time_ms=int((time.perf_counter() - started) * 1000),
-            truncated=truncated,
-        )
+        yield {"type": "answer_start"}
+        for piece in _split_answer(answer):
+            yield {"type": "answer_chunk", "content": piece}
+
+        yield {
+            "type": "final",
+            "response": AgentResponse(
+                answer=answer,
+                citations=self._build_citations(answer),
+                tool_calls=tool_calls,
+                total_iterations=iterations,
+                documents_accessed=list(self.tool_executor.accessed_documents),
+                tokens_used=tokens_used,
+                response_time_ms=int((time.perf_counter() - started) * 1000),
+                truncated=truncated,
+            ),
+        }
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -249,17 +277,35 @@ class AgentOrchestrator:
         """Turn the `[Document, Page N]` markers in the answer into structured
         citations, resolved against the passages the tools actually returned.
 
-        Only markers matching a real retrieved document become citations —
-        a name Claude invented has nothing to resolve against and is dropped,
-        so the citation list can never point at something that wasn't read.
+        Only markers naming a document the tools actually touched become
+        citations — a document Claude invented has nothing to resolve
+        against and is dropped, so a citation can never point at something
+        the agent never opened.
         """
-        candidates = self.tool_executor.citation_candidates
-        if not candidates or not answer:
+        if not answer:
             return []
 
         by_name: dict[str, list[dict]] = {}
-        for candidate in candidates:
+        for candidate in self.tool_executor.citation_candidates:
             by_name.setdefault(candidate["document_name"].casefold(), []).append(candidate)
+        # A document that was listed or analyzed rather than searched has no
+        # retrieved passage, but citing it is still legitimate — register an
+        # excerpt-less fallback so the citation resolves to the right id.
+        for document_id, document_name in self.tool_executor.accessed_documents.items():
+            by_name.setdefault(
+                document_name.casefold(),
+                [
+                    {
+                        "document_id": document_id,
+                        "document_name": document_name,
+                        "page_number": None,
+                        "excerpt": "",
+                    }
+                ],
+            )
+
+        if not by_name:
+            return []
 
         citations: list[Citation] = []
         seen: set[tuple[str, Optional[int]]] = set()
@@ -332,6 +378,28 @@ def summarize_input(
         suffix = f" ({focus})" if focus else ""
         return f"Summarizing {name_of('document_id')}{suffix}"
     return f"Running {tool_name}"
+
+
+def _split_answer(answer: str, size: int = ANSWER_CHUNK_CHARS) -> list[str]:
+    """Break the answer into whitespace-aligned pieces for progressive render.
+
+    Splits on spaces only — newlines stay attached to the piece they follow,
+    so markdown tables and lists survive reassembly by naive concatenation.
+    """
+    if not answer:
+        return []
+
+    pieces: list[str] = []
+    current = ""
+    for token in re.split(r"(?<= )", answer.replace("\n", "\n\x00")):
+        token = token.replace("\x00", "")
+        if len(current) + len(token) > size and current:
+            pieces.append(current)
+            current = ""
+        current += token
+    if current:
+        pieces.append(current)
+    return pieces
 
 
 def _summarize_result(result: str) -> str:

@@ -28,3 +28,6 @@ redis==7.0.1
 
 # Session 6 — local embeddings
 sentence-transformers==5.1.2
+
+# Session 7 — agent SSE streaming
+sse-starlette==2.1.3

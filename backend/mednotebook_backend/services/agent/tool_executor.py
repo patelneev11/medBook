@@ -73,6 +73,25 @@ class ToolExecutor:
     def __init__(self, user_id: str, db: AsyncSession):
         self.user_id = str(user_id)
         self.db = db
+        # Populated as tools run, and read afterwards by the orchestrator to
+        # build structured citations and resolve IDs to names in progress
+        # messages — the tool results themselves are prose for Claude, not a
+        # machine-readable record.
+        self.accessed_documents: dict[str, str] = {}
+        self.citation_candidates: list[dict] = []
+
+    def _record_passage(
+        self, document_id: str, document_name: str, page_number: Optional[int], excerpt: str
+    ) -> None:
+        self.accessed_documents[str(document_id)] = document_name
+        self.citation_candidates.append(
+            {
+                "document_id": str(document_id),
+                "document_name": document_name,
+                "page_number": page_number,
+                "excerpt": excerpt,
+            }
+        )
 
     async def execute(self, tool_name: str, tool_input: dict) -> str:
         handlers = {
@@ -124,6 +143,9 @@ class ToolExecutor:
 
         lines = [f"Found {len(results)} relevant passages:", ""]
         for i, result in enumerate(results, start=1):
+            self._record_passage(
+                result.document_id, result.document_name, result.page_number, result.content
+            )
             page = result.page_number if result.page_number is not None else "n/a"
             lines.append(f"[{i}] From: {result.document_name} (Page {page})")
             lines.append(f"Relevance: {round(result.similarity_score * 100)}%")
@@ -169,6 +191,11 @@ class ToolExecutor:
             return (
                 f"Document '{self._display_name(doc)}' has no extracted text yet "
                 f"(status: {doc.status.value})."
+            )
+
+        for chunk in chunks:
+            self._record_passage(
+                str(doc.id), self._display_name(doc), chunk.page_number, chunk.content
             )
 
         header = [
@@ -222,6 +249,8 @@ class ToolExecutor:
         if doc.file_key.startswith("pending/"):
             return f"'{self._display_name(doc)}' was never fully uploaded to storage — cannot analyze it."
 
+        self.accessed_documents[str(doc.id)] = self._display_name(doc)
+
         # S3 download and pandas are both blocking and CPU-bound; keep them off the event loop.
         return await asyncio.to_thread(
             _analyze_tabular_file,
@@ -261,6 +290,9 @@ class ToolExecutor:
             if not results:
                 lines.append(f"  (No passages about '{aspect}' found in this document.)")
             for result in results:
+                self._record_passage(
+                    result.document_id, result.document_name, result.page_number, result.content
+                )
                 page = result.page_number if result.page_number is not None else "n/a"
                 lines.append(f"  (Page {page}) {result.content}")
             lines.append("")
@@ -292,6 +324,7 @@ class ToolExecutor:
         grouped: dict[str, list[Document]] = {}
         for row in rows:
             grouped.setdefault(row.project_name or "", []).append(row.Document)
+            self.accessed_documents.setdefault(str(row.Document.id), self._display_name(row.Document))
 
         lines = [f"Available documents ({len(rows)} total):", ""]
         # Real projects first (alphabetically), unfiled documents last.
@@ -311,6 +344,7 @@ class ToolExecutor:
         if isinstance(doc, str):
             return doc
 
+        self.accessed_documents[str(doc.id)] = self._display_name(doc)
         metadata = (
             f"Document: {self._display_name(doc)}\n"
             f"Type: {self._file_type(doc.mime_type)} | Pages: {doc.page_count or 'n/a'} | "

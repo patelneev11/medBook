@@ -19,9 +19,19 @@ class AIQuery(Base):
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Threads multi-turn agent conversations. Every row has one — a standalone
+    # question is just a conversation of length one.
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, default=uuid.uuid4, index=True
+    )
     question: Mapped[str] = mapped_column(Text, nullable=False)
     answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     sources: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # What the agent did to produce the answer: the ordered tool calls, and
+    # the ids of every document any tool touched.
+    tool_calls: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    documents_accessed: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    iterations: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     model_used: Mapped[str] = mapped_column(
         String(100), default="claude-sonnet-4-20250514", nullable=False
     )

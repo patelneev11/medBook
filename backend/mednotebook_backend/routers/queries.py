@@ -2,10 +2,13 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..schemas.query import QueryCreate, QueryResponse
+from ..exceptions import AppException
+from ..models.query import AIQuery
+from ..schemas.query import QueryCreate, QueryFeedbackRequest, QueryResponse
 
 router = APIRouter(prefix="/queries", tags=["queries"])
 
@@ -30,6 +33,39 @@ async def create_query(payload: QueryCreate, db: AsyncSession = Depends(get_db))
         tokens_used=None,
         response_time_ms=None,
         created_at=_now(),
+    )
+
+
+@router.patch("/{query_id}/feedback", response_model=QueryResponse)
+async def submit_feedback(
+    query_id: uuid.UUID, payload: QueryFeedbackRequest, db: AsyncSession = Depends(get_db)
+):
+    # Query/list/get above don't persist yet (Session 6's TODOs) — this
+    # endpoint operates on real ai_queries rows, ready for once that lands,
+    # so it 404s until then rather than pretending to rate something that
+    # was never saved.
+    result = await db.execute(select(AIQuery).where(AIQuery.id == query_id))
+    query = result.scalar_one_or_none()
+    if query is None:
+        raise AppException("Query not found", "QUERY_NOT_FOUND", 404)
+
+    query.helpful = payload.helpful
+    await db.commit()
+    await db.refresh(query)
+
+    return QueryResponse(
+        id=query.id,
+        user_id=query.user_id,
+        project_id=query.project_id,
+        question=query.question,
+        answer=query.answer,
+        sources=query.sources,
+        model_used=query.model_used,
+        tokens_used=query.tokens_used,
+        response_time_ms=query.response_time_ms,
+        search_log_id=query.search_log_id,
+        helpful=query.helpful,
+        created_at=query.created_at,
     )
 
 

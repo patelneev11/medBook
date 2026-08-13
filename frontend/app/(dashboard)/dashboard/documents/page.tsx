@@ -184,10 +184,19 @@ export default function DocumentsPage() {
     setDocs((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
   }, []);
 
-  const errorCount = useMemo(() => docs.filter((d) => d.status === "error").length, [docs]);
+  // A document can fail two different ways: parsing itself failed
+  // (status "error"), or parsing succeeded but embedding permanently
+  // failed after retries (status stays "ready", embedding_status "error").
+  // Both are surfaced/retried together here.
+  const isFailedDoc = useCallback(
+    (d: Document) => d.status === "error" || (d.status === "ready" && d.embedding_status === "error"),
+    []
+  );
+
+  const errorCount = useMemo(() => docs.filter(isFailedDoc).length, [docs, isFailedDoc]);
 
   const handleRetryAll = useCallback(async () => {
-    const failedDocs = docs.filter((d) => d.status === "error");
+    const failedDocs = docs.filter(isFailedDoc);
     if (failedDocs.length === 0) return;
 
     setRetryingAll(true);
@@ -199,7 +208,11 @@ export default function DocumentsPage() {
       try {
         await api.post(`/documents/${doc.id}/retry`, {});
         toast.info(`Reprocessing ${doc.display_name ?? doc.filename}...`);
-        handleDocumentUpdate(doc.id, { status: "pending", error_message: null, chunk_count: 0 });
+        if (doc.status === "ready") {
+          handleDocumentUpdate(doc.id, { embedding_status: "pending" });
+        } else {
+          handleDocumentUpdate(doc.id, { status: "pending", embedding_status: "pending", error_message: null, chunk_count: 0 });
+        }
         succeeded += 1;
       } catch {
         failed += 1;
@@ -216,7 +229,7 @@ export default function DocumentsPage() {
     } else {
       toast.error(`Retried ${succeeded} of ${failedDocs.length} documents`, `${failed} could not be retried.`);
     }
-  }, [docs, toast, handleDocumentUpdate]);
+  }, [docs, toast, handleDocumentUpdate, isFailedDoc]);
 
   // ── Close menu on outside click ───────────────────────────────────────────
   useEffect(() => {

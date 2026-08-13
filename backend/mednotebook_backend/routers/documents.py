@@ -3,7 +3,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -18,9 +18,11 @@ from ..schemas.document import (
     DocumentStatusResponse,
     DocumentUpdate,
 )
+from ..schemas.search import SimilarDocumentItem, SimilarDocumentsResponse
 from ..services import file_validator
 from ..services import storage as storage_service
-from tasks.document_tasks import process_document
+from ..services.search import find_similar_documents
+from tasks.document_tasks import generate_embeddings, process_document
 
 logger = logging.getLogger("mednotebook.documents")
 
@@ -33,11 +35,14 @@ _SUPPORTED_TYPES = ", ".join(sorted(file_validator.ALLOWED_TYPES.keys()))
 _TEXT_PREVIEW_CHARS = 500
 
 # No per-step progress instrumentation yet — coarse mapping until the real
-# extraction pipeline reports granular progress.
+# extraction pipeline reports granular progress. "ready" is a real
+# in-progress state now (parsed, embeddings not generated yet), not a
+# synonym for done — only "indexed" means fully done.
 _PROGRESS_BY_STATUS = {
     DocumentStatus.pending: 0,
     DocumentStatus.processing: 50,
-    DocumentStatus.ready: 100,
+    DocumentStatus.ready: 75,
+    DocumentStatus.indexed: 100,
     DocumentStatus.error: 0,
 }
 
@@ -159,7 +164,9 @@ async def get_document(document_id: uuid.UUID, db: AsyncSession = Depends(get_db
     uploader_name = user_result.scalar_one_or_none()
 
     preview = None
-    if doc.status == DocumentStatus.ready:
+    embedded_chunk_count = None
+    embedding_model = None
+    if doc.status in (DocumentStatus.ready, DocumentStatus.indexed):
         chunk_result = await db.execute(
             select(DocumentChunk.content)
             .where(DocumentChunk.document_id == document_id)
@@ -170,10 +177,20 @@ async def get_document(document_id: uuid.UUID, db: AsyncSession = Depends(get_db
         if first_chunk_content:
             preview = first_chunk_content[:_TEXT_PREVIEW_CHARS]
 
+        progress_result = await db.execute(
+            select(
+                func.count(DocumentChunk.embedding),  # COUNT ignores NULLs
+                func.max(DocumentChunk.embedding_model),
+            ).where(DocumentChunk.document_id == document_id)
+        )
+        embedded_chunk_count, embedding_model = progress_result.one()
+
     return DocumentDetailResponse(
         **DocumentResponse.model_validate(doc).model_dump(),
         uploaded_by_name=uploader_name,
         extracted_text_preview=preview,
+        embedded_chunk_count=embedded_chunk_count,
+        embedding_model=embedding_model,
     )
 
 
@@ -183,6 +200,7 @@ async def get_document_status(document_id: uuid.UUID, db: AsyncSession = Depends
     return DocumentStatusResponse(
         id=doc.id,
         status=doc.status,
+        embedding_status=doc.embedding_status,
         progress_percent=_PROGRESS_BY_STATUS[doc.status],
         error_message=doc.error_message,
         word_count=doc.word_count,
@@ -194,12 +212,25 @@ async def get_document_status(document_id: uuid.UUID, db: AsyncSession = Depends
 @router.post("/{document_id}/retry", status_code=status.HTTP_202_ACCEPTED)
 async def retry_document(document_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     doc = await _get_or_404(document_id, db)
-    if doc.status != DocumentStatus.error:
+
+    # Two distinct failure points can now land here: parsing itself failed
+    # (status=error — needs a full re-parse), or parsing succeeded but
+    # embedding permanently failed (status stays "ready", embedding_status
+    # ="error" — only the embedding step needs retrying, not a re-parse).
+    embedding_only_retry = doc.status == DocumentStatus.ready and doc.embedding_status == "error"
+    if doc.status != DocumentStatus.error and not embedding_only_retry:
         raise AppException(
-            "Only documents with status 'error' can be retried",
+            "Only documents with status 'error', or 'ready' with a failed embedding step, can be retried",
             "INVALID_STATUS_FOR_RETRY",
             400,
         )
+
+    if embedding_only_retry:
+        doc.embedding_status = "pending"
+        await db.commit()
+        generate_embeddings.delay(str(doc.id))
+        return {"message": "Embedding generation restarted"}
+
     if doc.file_key.startswith("pending/"):
         raise AppException("File was never uploaded to storage — cannot retry", "FILE_NOT_READY", 400)
 
@@ -207,6 +238,7 @@ async def retry_document(document_id: uuid.UUID, db: AsyncSession = Depends(get_
     doc.error_message = None
     doc.processing_started_at = None
     doc.chunk_count = 0
+    doc.embedding_status = "pending"
 
     await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
     await db.commit()
@@ -276,6 +308,19 @@ async def list_chunks(
         .limit(limit)
     )
     return result.scalars().all()
+
+
+# ── Similar documents ────────────────────────────────────────────────────────
+
+@router.post("/{document_id}/similar", response_model=SimilarDocumentsResponse)
+async def similar_documents(
+    document_id: uuid.UUID,
+    limit: int = Query(5, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_or_404(document_id, db)
+    results = await find_similar_documents(db, str(document_id), str(_PLACEHOLDER_USER), limit=limit)
+    return SimilarDocumentsResponse(documents=[SimilarDocumentItem(**r) for r in results])
 
 
 # ── Summarize ─────────────────────────────────────────────────────────────────

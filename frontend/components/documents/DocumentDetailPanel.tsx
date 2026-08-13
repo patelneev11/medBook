@@ -11,7 +11,7 @@ import {
   Send,
   Clock,
   Loader2,
-  CheckCircle2,
+  Sparkles,
   AlertTriangle,
 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -170,7 +170,7 @@ function OverviewTab({ doc }: { doc: DocumentDetail }) {
         <StatusDetail doc={doc} />
       </div>
 
-      {doc.status === "ready" && (
+      {(doc.status === "ready" || doc.status === "indexed") && (
         <div className="grid grid-cols-2 gap-3">
           <Stat label="Words" value={formatNumber(doc.word_count)} />
           <Stat label="Pages" value={formatNumber(doc.page_count)} />
@@ -179,7 +179,9 @@ function OverviewTab({ doc }: { doc: DocumentDetail }) {
         </div>
       )}
 
-      {doc.status === "ready" && doc.extracted_text_preview && (
+      {(doc.status === "ready" || doc.status === "indexed") && <IndexingSection doc={doc} />}
+
+      {(doc.status === "ready" || doc.status === "indexed") && doc.extracted_text_preview && (
         <div>
           <p className="mb-1.5 text-xs font-medium uppercase tracking-wide" style={{ color: "var(--text-tertiary)" }}>
             Preview
@@ -202,6 +204,64 @@ function OverviewTab({ doc }: { doc: DocumentDetail }) {
   );
 }
 
+// Purely presentational heuristic, not a backend-computed metric — more
+// chunks generally means more distinct retrievable passages for a query to
+// land on, so search has more to work with.
+function estimateSearchQuality(chunkCount: number | null): string | null {
+  if (chunkCount == null || chunkCount === 0) return null;
+  if (chunkCount < 3) return "Fair";
+  if (chunkCount <= 10) return "Good";
+  return "Excellent";
+}
+
+function IndexingSection({ doc }: { doc: DocumentDetail }) {
+  const total = doc.chunk_count ?? 0;
+  const embedded = doc.embedded_chunk_count ?? 0;
+  const percent = total > 0 ? Math.round((embedded / total) * 100) : 0;
+  const quality = estimateSearchQuality(doc.chunk_count);
+
+  return (
+    <div>
+      <p className="mb-2 text-xs font-medium uppercase tracking-wide" style={{ color: "var(--text-tertiary)" }}>
+        Indexing
+      </p>
+      <div className="space-y-2.5 rounded-lg border p-3 text-sm" style={{ borderColor: "var(--border-default)" }}>
+        <div className="flex items-center justify-between">
+          <span style={{ color: "var(--text-tertiary)" }}>Total chunks</span>
+          <span style={{ color: "var(--text-primary)" }}>{formatNumber(doc.chunk_count)}</span>
+        </div>
+        <div>
+          <div className="flex items-center justify-between">
+            <span style={{ color: "var(--text-tertiary)" }}>Indexed chunks</span>
+            <span style={{ color: "var(--text-primary)" }}>{formatNumber(doc.embedded_chunk_count)}</span>
+          </div>
+          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full" style={{ backgroundColor: "var(--bg-tertiary)" }}>
+            <div
+              className="h-full rounded-full transition-all"
+              style={{
+                width: `${percent}%`,
+                backgroundColor: doc.status === "indexed" ? "var(--brand-primary)" : "#7C3AED",
+              }}
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-between">
+          <span style={{ color: "var(--text-tertiary)" }}>Embedding model</span>
+          <span className="truncate" style={{ color: "var(--text-primary)" }} title={doc.embedding_model ?? undefined}>
+            {doc.embedding_model ?? "—"}
+          </span>
+        </div>
+        {quality && (
+          <div className="flex items-center justify-between">
+            <span style={{ color: "var(--text-tertiary)" }}>Search quality</span>
+            <span style={{ color: "var(--text-primary)" }}>{quality}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function StatusDetail({ doc }: { doc: DocumentDetail }) {
   if (doc.status === "pending") {
     return <DetailRow icon={Clock} color="var(--text-secondary)" title="Waiting to process" subtitle="Queued for extraction" />;
@@ -217,13 +277,40 @@ function StatusDetail({ doc }: { doc: DocumentDetail }) {
       />
     );
   }
-  if (doc.status === "ready") {
+  if (doc.status === "indexed") {
+    const completed = doc.processing_completed_at ? formatDate(doc.processing_completed_at) : undefined;
     return (
       <DetailRow
-        icon={CheckCircle2}
+        icon={Sparkles}
         color="var(--brand-primary)"
-        title="Ready"
-        subtitle={doc.processing_completed_at ? `Completed ${formatDate(doc.processing_completed_at)}` : undefined}
+        title="Indexed"
+        subtitle={completed ? `Searchable · completed ${completed}` : "Searchable"}
+      />
+    );
+  }
+  if (doc.status === "ready") {
+    // Text is already extracted at this point — only embedding remains
+    // (either still running, or permanently failed after retries).
+    if (doc.embedding_status === "error") {
+      return (
+        <div className="flex items-start gap-2.5">
+          <AlertTriangle size={16} style={{ color: "var(--error)" }} className="mt-0.5 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium" style={{ color: "var(--error)" }}>Indexing failed</p>
+            <p className="mt-0.5 text-xs" style={{ color: "var(--text-tertiary)" }}>
+              Text was extracted, but embedding failed after retries — not searchable yet.
+            </p>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <DetailRow
+        icon={Loader2}
+        spin
+        color="#7C3AED"
+        title="Building search index…"
+        subtitle="Text extracted — indexing for search"
       />
     );
   }

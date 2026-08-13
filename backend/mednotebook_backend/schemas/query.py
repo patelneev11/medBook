@@ -27,6 +27,12 @@ class QueryResponse(QueryBase):
     model_used: str
     tokens_used: Optional[int]
     response_time_ms: Optional[int]
+    search_log_id: Optional[uuid.UUID] = None
+    helpful: Optional[bool] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class QueryFeedbackRequest(BaseModel):
+    helpful: bool

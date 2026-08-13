@@ -1,9 +1,10 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { Search, Bell, Menu, Upload } from "lucide-react";
+import { Bell, Menu, Upload } from "lucide-react";
 import { ApiStatus } from "@/components/ui/ApiStatus";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
+import { TopBarSearch } from "@/components/layout/TopBarSearch";
 import { useUpload } from "@/context/UploadContext";
 
 const pageTitles: Record<string, string> = {
@@ -12,6 +13,7 @@ const pageTitles: Record<string, string> = {
   "/dashboard/projects":  "Projects",
   "/dashboard/ask":       "Ask AI",
   "/dashboard/settings":  "Settings",
+  "/search":              "Search",
 };
 
 interface TopBarProps {
@@ -44,17 +46,8 @@ export function TopBar({ onMenuClick }: TopBarProps) {
       </h1>
 
       {/* Search */}
-      <div
-        className="flex flex-1 max-w-sm items-center gap-2 rounded-lg border px-3 py-1.5"
-        style={{ backgroundColor: "var(--bg-secondary)", borderColor: "var(--border-default)" }}
-      >
-        <Search size={13} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />
-        <input
-          type="text"
-          placeholder="Search documents…"
-          className="flex-1 bg-transparent text-sm focus:outline-none"
-          style={{ color: "var(--text-primary)" }}
-        />
+      <div className="flex flex-1 items-center">
+        <TopBarSearch />
       </div>
 
       {/* Right actions */}

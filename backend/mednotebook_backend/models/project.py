@@ -38,6 +38,8 @@ class Project(Base):
     )
     documents: Mapped[list["Document"]] = relationship("Document", back_populates="project")
     queries: Mapped[list["AIQuery"]] = relationship("AIQuery", back_populates="project")
+    search_history: Mapped[list["SearchHistory"]] = relationship("SearchHistory", back_populates="project")
+    search_logs: Mapped[list["SearchLog"]] = relationship("SearchLog", back_populates="project")
 
 
 class ProjectMembership(Base):

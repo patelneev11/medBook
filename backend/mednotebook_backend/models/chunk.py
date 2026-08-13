@@ -4,13 +4,14 @@ from datetime import datetime
 from typing import Optional
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import TSVECTOR, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
 
-EMBEDDING_DIM = 1536
+# sentence-transformers/all-MiniLM-L6-v2 output size
+EMBEDDING_DIM = 384
 
 
 class ChunkType(str, enum.Enum):
@@ -39,6 +40,10 @@ class DocumentChunk(Base):
     embedding: Mapped[Optional[list]] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
     page_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     token_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    embedding_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    embedding_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # DB-computed (GENERATED ALWAYS ... STORED) — never set this from Python.
+    content_tsv: Mapped[Optional[str]] = mapped_column(TSVECTOR, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     document: Mapped["Document"] = relationship("Document", back_populates="chunks")

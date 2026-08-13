@@ -45,3 +45,12 @@ class User(Base):
         "AIQuery", back_populates="user", cascade="all, delete-orphan"
     )
     audit_logs: Mapped[list["AuditLog"]] = relationship("AuditLog", back_populates="user")
+    search_history: Mapped[list["SearchHistory"]] = relationship(
+        "SearchHistory", back_populates="user", cascade="all, delete-orphan"
+    )
+    embedding_costs: Mapped[list["EmbeddingCost"]] = relationship(
+        "EmbeddingCost", back_populates="user", cascade="all, delete-orphan"
+    )
+    search_logs: Mapped[list["SearchLog"]] = relationship(
+        "SearchLog", back_populates="user", cascade="all, delete-orphan"
+    )

@@ -27,6 +27,14 @@ class Settings(BaseSettings):
 
     # ── AI ────────────────────────────────────────────────────────────────────
     anthropic_api_key: str = ""
+    # Local sentence-transformers model used for chunk embeddings — no
+    # external API, no per-call cost.
+    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_dimensions: int = 384
+    # Used only for cost *monitoring* (embedding_costs table) — the local
+    # model itself is free; this rate lets the admin dashboard track what
+    # the same volume would cost against a typical hosted embeddings API.
+    embedding_cost_per_1k_tokens_usd: float = 0.00002
 
     # ── Background jobs ───────────────────────────────────────────────────────
     # Redis, used as both the Celery broker and result backend

@@ -44,6 +44,7 @@ class DocumentResponse(DocumentBase):
     word_count: Optional[int]
     chunk_count: Optional[int]
     extraction_method: Optional[str]
+    embedding_status: str
     summary: Optional[str]
     error_message: Optional[str]
     processing_started_at: Optional[datetime]
@@ -66,11 +67,17 @@ class DocumentDetailResponse(DocumentResponse):
     """
     uploaded_by_name: Optional[str] = None
     extracted_text_preview: Optional[str] = None
+    # How many of chunk_count already have an embedding — distinct from
+    # embedding_status (which is a single pending/generating/complete/error
+    # value), this is the actual N/M progress for the indexing detail view.
+    embedded_chunk_count: Optional[int] = None
+    embedding_model: Optional[str] = None
 
 
 class DocumentStatusResponse(BaseModel):
     id: uuid.UUID
     status: DocumentStatus
+    embedding_status: str
     progress_percent: int
     error_message: Optional[str] = None
     word_count: Optional[int] = None

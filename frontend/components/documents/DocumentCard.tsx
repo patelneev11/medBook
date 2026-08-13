@@ -11,15 +11,16 @@ import {
   Trash2,
   Clock,
   Loader2,
-  CheckCircle2,
   AlertTriangle,
   RotateCcw,
+  Layers,
 } from "lucide-react";
 import { useToast } from "@/context/ToastContext";
 import { api } from "@/lib/api";
 import { classifyMime, FILE_STYLES, formatBytes, formatDate, formatNumber } from "@/lib/documentDisplay";
 import { useDocumentStatus } from "@/hooks/useDocumentStatus";
-import type { Document, DocumentStatusValue } from "@/types/document";
+import { SimilarDocumentsPanel } from "@/components/documents/SimilarDocumentsPanel";
+import type { Document, DocumentStatusValue, EmbeddingStatusValue } from "@/types/document";
 
 const ERROR_MESSAGE_MAX_LEN = 70;
 
@@ -46,6 +47,7 @@ export function DocumentCard({
 }: DocumentCardProps) {
   const { toast } = useToast();
   const [retrying, setRetrying] = useState(false);
+  const [showSimilar, setShowSimilar] = useState(false);
 
   const cls = classifyMime(doc.mime_type);
   const { icon: Icon, bg, color } = FILE_STYLES[cls];
@@ -53,10 +55,11 @@ export function DocumentCard({
   const menuOpen = menuOpenId === doc.id;
   const isViewable = cls === "pdf" || cls === "image";
 
-  const poll = useDocumentStatus(doc.id, doc.status, {
+  const poll = useDocumentStatus(doc.id, doc.status, doc.embedding_status, {
     onUpdate: (p) => {
       onDocumentUpdate(doc.id, {
         status: p.status,
+        embedding_status: p.embedding_status,
         word_count: p.word_count,
         page_count: p.page_count,
         chunk_count: p.chunk_count,
@@ -64,16 +67,20 @@ export function DocumentCard({
       });
     },
     onReady: () => {
-      toast.success(`${name} is ready`, "You can now ask AI questions about it");
+      toast.success(`${name} is fully indexed`, "Ask AI anything about it");
     },
     onError: (p) => {
-      toast.error(`${name} failed to process`, p.error_message ?? undefined);
+      if (p.status === "ready") {
+        toast.error(`${name} couldn't be indexed`, "Text was extracted, but embedding failed. You can retry.");
+      } else {
+        toast.error(`${name} failed to process`, p.error_message ?? undefined);
+      }
     },
   });
 
   const liveStatus: DocumentStatusValue = poll?.status ?? doc.status;
+  const liveEmbeddingStatus: EmbeddingStatusValue = poll?.embedding_status ?? doc.embedding_status;
   const wordCount = poll?.word_count ?? doc.word_count;
-  const chunkCount = poll?.chunk_count ?? doc.chunk_count;
   const errorMessage = poll?.error_message ?? doc.error_message;
 
   const handleRetry = async (e: MouseEvent) => {
@@ -81,10 +88,20 @@ export function DocumentCard({
     setRetrying(true);
     try {
       await api.post(`/documents/${doc.id}/retry`, {});
-      toast.info(`Reprocessing ${name}...`);
-      // status -> "pending" both updates the badge immediately and, via the
-      // initialStatus prop into useDocumentStatus, restarts polling.
-      onDocumentUpdate(doc.id, { status: "pending", error_message: null, chunk_count: 0 });
+      // Two different retry paths on the backend depending on where things
+      // failed: a full reprocess (status -> pending) if parsing itself
+      // failed, or just the embedding step (status stays "ready",
+      // embedding_status -> pending) if only embedding failed. Either way
+      // the patch below both updates the badge immediately and, via the
+      // initialStatus/initialEmbeddingStatus props into useDocumentStatus,
+      // restarts polling.
+      if (liveStatus === "ready") {
+        toast.info(`Retrying embeddings for ${name}...`);
+        onDocumentUpdate(doc.id, { embedding_status: "pending" });
+      } else {
+        toast.info(`Reprocessing ${name}...`);
+        onDocumentUpdate(doc.id, { status: "pending", embedding_status: "pending", error_message: null, chunk_count: 0 });
+      }
     } catch {
       toast.error("Could not retry processing", "Please try again.");
     } finally {
@@ -93,6 +110,7 @@ export function DocumentCard({
   };
 
   return (
+    <>
     <div
       onClick={() => onOpenDetail(doc)}
       role="button"
@@ -154,6 +172,14 @@ export function DocumentCard({
               Summarize
             </button>
             <button
+              onClick={(e) => { e.stopPropagation(); onMenuToggle(doc.id); setShowSimilar(true); }}
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-sm transition-colors hover:bg-[var(--bg-secondary)]"
+              style={{ color: "var(--text-primary)" }}
+            >
+              <Layers size={14} style={{ color: "var(--text-tertiary)" }} />
+              Find similar
+            </button>
+            <button
               onClick={(e) => { e.stopPropagation(); onMenuToggle(doc.id); }}
               className="flex w-full items-center gap-2.5 px-3 py-2 text-sm transition-colors hover:bg-[var(--bg-secondary)]"
               style={{ color: "var(--text-primary)" }}
@@ -198,8 +224,8 @@ export function DocumentCard({
       <div className="mt-auto flex flex-col gap-2">
         <StatusRow
           status={liveStatus}
+          embeddingStatus={liveEmbeddingStatus}
           wordCount={wordCount}
-          chunkCount={chunkCount}
           errorMessage={errorMessage}
           retrying={retrying}
           onRetry={handleRetry}
@@ -211,6 +237,18 @@ export function DocumentCard({
         )}
       </div>
     </div>
+
+    {/* Rendered as a sibling, not nested inside the card's clickable div —
+        otherwise a click on the modal backdrop would bubble up and also
+        trigger onOpenDetail underneath it. */}
+    {showSimilar && (
+      <SimilarDocumentsPanel
+        documentId={doc.id}
+        documentName={name}
+        onClose={() => setShowSimilar(false)}
+      />
+    )}
+    </>
   );
 }
 
@@ -218,15 +256,15 @@ export function DocumentCard({
 
 function StatusRow({
   status,
+  embeddingStatus,
   wordCount,
-  chunkCount,
   errorMessage,
   retrying,
   onRetry,
 }: {
   status: DocumentStatusValue;
+  embeddingStatus: EmbeddingStatusValue;
   wordCount: number | null;
-  chunkCount: number | null;
   errorMessage: string | null;
   retrying: boolean;
   onRetry: (e: MouseEvent) => void;
@@ -256,16 +294,53 @@ function StatusRow({
   }
 
   if (status === "ready") {
-    const parts = ["Ready"];
-    if (wordCount != null) parts.push(`${formatNumber(wordCount)} word${wordCount === 1 ? "" : "s"}`);
-    if (chunkCount != null) parts.push(`${formatNumber(chunkCount)} chunk${chunkCount === 1 ? "" : "s"}`);
+    // Parsed successfully — embedding is either still running or
+    // permanently failed after retries (parsing content stays usable
+    // either way, it just isn't searchable yet).
+    if (embeddingStatus === "error") {
+      return (
+        <div className="flex flex-col items-start gap-1.5">
+          <span
+            className="inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium"
+            style={{ backgroundColor: "#FEF2F2", color: "var(--error)" }}
+          >
+            <AlertTriangle size={12} />
+            Indexing failed
+          </span>
+          <button
+            onClick={onRetry}
+            disabled={retrying}
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium transition-colors hover:opacity-80 disabled:opacity-40"
+            style={{ color: "var(--brand-primary)" }}
+          >
+            <RotateCcw size={11} className={retrying ? "animate-spin" : ""} />
+            {retrying ? "Retrying…" : "Retry"}
+          </button>
+        </div>
+      );
+    }
+    return (
+      <span
+        className="inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium"
+        style={{ backgroundColor: "#F5F3FF", color: "#7C3AED" }}
+      >
+        <Loader2 size={12} className="animate-spin" />
+        Building search index...
+      </span>
+    );
+  }
+
+  if (status === "indexed") {
+    const label = wordCount != null
+      ? `Ready for AI · ${formatNumber(wordCount)} word${wordCount === 1 ? "" : "s"}`
+      : "Ready for AI";
     return (
       <span
         className="inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium"
         style={{ backgroundColor: "var(--brand-secondary)", color: "var(--brand-primary)" }}
       >
-        <CheckCircle2 size={12} />
-        {parts.join(" · ")}
+        <Sparkles size={12} />
+        {label}
       </span>
     );
   }

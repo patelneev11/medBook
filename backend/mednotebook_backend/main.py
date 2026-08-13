@@ -9,7 +9,7 @@ from starlette.exceptions import HTTPException
 from .exceptions import AppException
 from .middleware.cors import add_cors
 from .middleware.logging import add_logging
-from .routers import documents, health, projects, queries
+from .routers import admin, documents, health, projects, queries, search
 from .routers.users import auth_router, users_router
 
 logging.basicConfig(
@@ -99,5 +99,7 @@ api_router.include_router(users_router)
 api_router.include_router(projects.router)
 api_router.include_router(documents.router)
 api_router.include_router(queries.router)
+api_router.include_router(search.router)
+api_router.include_router(admin.router)
 
 app.include_router(api_router)

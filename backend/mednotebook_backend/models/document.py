@@ -14,6 +14,8 @@ class DocumentStatus(str, enum.Enum):
     pending = "pending"
     processing = "processing"
     ready = "ready"
+    # Text extracted, chunked, and every chunk has an embedding — searchable.
+    indexed = "indexed"
     error = "error"
 
 
@@ -39,6 +41,10 @@ class Document(Base):
     word_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     chunk_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     extraction_method: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # Tracks embedding progress specifically (pending/generating/complete/error) —
+    # kept in sync with `status` by the Celery pipeline but distinct because it
+    # captures a "generating" state that `status` (ready/processing/indexed) doesn't.
+    embedding_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     processing_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -52,4 +58,7 @@ class Document(Base):
     uploader: Mapped["User"] = relationship("User", back_populates="uploaded_documents")
     chunks: Mapped[list["DocumentChunk"]] = relationship(
         "DocumentChunk", back_populates="document", cascade="all, delete-orphan"
+    )
+    embedding_costs: Mapped[list["EmbeddingCost"]] = relationship(
+        "EmbeddingCost", back_populates="document", cascade="all, delete-orphan"
     )

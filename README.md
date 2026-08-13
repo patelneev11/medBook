@@ -45,7 +45,8 @@ medBook/
 | JWT Authentication | 🔲 Not started |
 | Text extraction + chunking | ✅ Complete (Session 5) |
 | Background job processing (Celery + Redis) | ✅ Complete (Session 5) |
-| AI / RAG pipeline (embeddings + vector search) | 🔲 Session 6 |
+| Embeddings + semantic/keyword/hybrid search | ✅ Complete (Session 6) — documents show **"Indexed"** once fully searchable |
+| AI Q&A with citations (Claude API) | 🔲 Session 7 |
 
 ---
 
@@ -230,3 +231,4 @@ See [Session 03 notes](docs/session-03-notes.md) for the original endpoint scaff
 - [Session 03](docs/session-03-notes.md) — Backend structure, database models, API scaffold, frontend/backend connected
 - [Session 04](docs/session-04-notes.md) — File upload pipeline: S3 storage, upload/download/view endpoints, document grid, viewer, delete
 - [Session 05](docs/session-05-notes.md) — Document parsing & chunking pipeline: Celery/Redis background jobs, PDF/CSV/Excel/text/image parsers, semantic chunker, retry support
+- [Session 06](docs/session-06-notes.md) — Embeddings & semantic search: local MiniLM embedding pipeline, pgvector similarity search, semantic/keyword/hybrid search modes, "Indexed" document status, cost + search performance monitoring

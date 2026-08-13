@@ -1,8 +1,10 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Sparkles, Send, BookOpen } from "lucide-react";
+import { Sparkles, Send, BookOpen, Loader2 } from "lucide-react";
+import { api } from "@/lib/api";
+import type { Document } from "@/types/document";
 
 const EXAMPLE_QUESTIONS = [
   "Summarize my most recent upload",
@@ -10,7 +12,10 @@ const EXAMPLE_QUESTIONS = [
   "Compare results across my CSV files",
 ];
 
-const HAS_DOCUMENTS = false;
+const POLL_INTERVAL_MS = 5000;
+// Large enough to cover realistic usage without building full pagination
+// for what's just a readiness count — see backend's per_page cap (100).
+const DOCUMENT_FETCH_LIMIT = 100;
 
 export default function AskAIPage() {
   return (
@@ -27,7 +32,44 @@ function AskAIPageContent() {
   // just carries the question text and which document prompted it.
   const [input, setInput] = useState(() => searchParams.get("q") ?? "");
   const documentName = searchParams.get("document_name");
-  const canSend = HAS_DOCUMENTS && input.trim().length > 0;
+
+  const [documents, setDocuments] = useState<Document[] | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const fetchDocuments = async () => {
+      try {
+        const docs = await api.get<Document[]>(`/documents?per_page=${DOCUMENT_FETCH_LIMIT}`);
+        if (!active) return;
+        setDocuments(docs);
+
+        // Keep polling while there are documents but none are indexed yet,
+        // so this banner clears on its own once one finishes — same spirit
+        // as the per-card status polling, just for the aggregate count.
+        const indexedCount = docs.filter((d) => d.status === "indexed").length;
+        if (docs.length > 0 && indexedCount === 0) {
+          timeoutId = setTimeout(fetchDocuments, POLL_INTERVAL_MS);
+        }
+      } catch {
+        if (active) setDocuments((prev) => prev ?? []);
+      }
+    };
+
+    fetchDocuments();
+    return () => {
+      active = false;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, []);
+
+  const totalCount = documents?.length ?? 0;
+  const indexedCount = documents?.filter((d) => d.status === "indexed").length ?? 0;
+  const stillIndexing = totalCount > 0 && indexedCount === 0;
+  const canSend = indexedCount > 0 && input.trim().length > 0;
+
+  const disabledReason = totalCount === 0 ? "Upload documents first" : stillIndexing ? "Documents still indexing" : null;
 
   return (
     <div className="flex flex-col gap-6 lg:flex-row lg:h-[calc(100dvh-56px-48px)]">
@@ -44,6 +86,24 @@ function AskAIPageContent() {
             ? `Asking about "${documentName}" — answers are based on your uploaded documents only`
             : "Answers are based on your uploaded documents only"}
         </div>
+
+        {/* Indexing status */}
+        {stillIndexing && (
+          <div
+            className="flex shrink-0 items-center gap-2.5 rounded-lg border px-4 py-2.5"
+            style={{ backgroundColor: "#F5F3FF", borderColor: "#7C3AED" }}
+          >
+            <Loader2 size={15} className="shrink-0 animate-spin" style={{ color: "#7C3AED" }} />
+            <p className="text-xs" style={{ color: "#7C3AED" }}>
+              Your documents are still being indexed. This usually takes 1-2 minutes.
+            </p>
+          </div>
+        )}
+        {totalCount > 0 && (
+          <p className="shrink-0 px-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
+            {indexedCount} of {totalCount} document{totalCount === 1 ? "" : "s"} ready for AI queries
+          </p>
+        )}
 
         {/* Messages */}
         <div
@@ -97,8 +157,9 @@ function AskAIPageContent() {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              disabled={indexedCount === 0}
               placeholder="Ask a question about your documents…"
-              className="flex-1 rounded-lg border px-4 py-2.5 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-brand-primary/15 focus:border-brand-primary"
+              className="flex-1 rounded-lg border px-4 py-2.5 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-brand-primary/15 focus:border-brand-primary disabled:cursor-not-allowed disabled:opacity-60"
               style={{
                 backgroundColor: "var(--bg-secondary)",
                 borderColor: "var(--border-default)",
@@ -112,12 +173,12 @@ function AskAIPageContent() {
               >
                 <Send size={15} />
               </button>
-              {!HAS_DOCUMENTS && (
+              {disabledReason && (
                 <div
                   className="pointer-events-none absolute bottom-full right-0 mb-2 hidden whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs text-white group-hover:block"
                   style={{ backgroundColor: "var(--text-primary)" }}
                 >
-                  Upload documents first
+                  {disabledReason}
                 </div>
               )}
             </div>

@@ -18,9 +18,9 @@ from sse_starlette.sse import AppStatus
 from mednotebook_backend.database import AsyncSessionLocal, engine
 from mednotebook_backend.main import app
 from mednotebook_backend.models.document import Document, DocumentStatus
+from mednotebook_backend.models.project import Project
 from mednotebook_backend.models.query import AIQuery
 from mednotebook_backend.models.user import User
-from mednotebook_backend.routers import queries as queries_router
 from mednotebook_backend.services.agent import orchestrator as orchestrator_module
 
 USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -128,6 +128,11 @@ async def client():
         yield c
 
 
+def _our_queries():
+    """Other users' rows may exist in the dev database — never assert on them."""
+    return select(AIQuery).where(AIQuery.user_id == USER_ID)
+
+
 def _parse_sse(body: str) -> list[dict]:
     return [
         json.loads(line[len("data: "):])
@@ -151,7 +156,7 @@ async def test_non_streaming_returns_answer_and_persists(client):
     assert body["citations"][0]["document_name"] == "Q3_cohort.csv"
 
     async with AsyncSessionLocal() as db:
-        saved = (await db.execute(select(AIQuery))).scalars().all()
+        saved = (await db.execute(_our_queries())).scalars().all()
     assert len(saved) == 1
     assert saved[0].answer == ANSWER
     assert saved[0].tool_calls[0]["tool"] == "get_document_list"
@@ -184,7 +189,7 @@ async def test_streaming_emits_progress_then_done(client):
     assert done["tokens_used"] == 300
 
     async with AsyncSessionLocal() as db:
-        saved = (await db.execute(select(AIQuery))).scalars().all()
+        saved = (await db.execute(_our_queries())).scalars().all()
     assert len(saved) == 1
     assert str(saved[0].id) == done["query_id"]
 
@@ -212,14 +217,59 @@ async def test_conversation_history_is_replayed(client, fake_anthropic):
     assert replayed[2] == {"role": "user", "content": "And in group B?"}
 
     async with AsyncSessionLocal() as db:
-        saved = (await db.execute(select(AIQuery))).scalars().all()
+        saved = (await db.execute(_our_queries())).scalars().all()
     assert {str(row.conversation_id) for row in saved} == {conversation_id}
 
 
 @pytest.mark.asyncio
-async def test_stream_reports_errors_as_events(client, monkeypatch):
+async def test_owned_project_is_accepted(client):
+    project_id = uuid.uuid4()
+    async with AsyncSessionLocal() as db:
+        db.add(Project(id=project_id, name="Q3 Cohort", owner_id=USER_ID))
+        await db.commit()
+
+    response = await client.post(
+        "/api/v1/agent/query",
+        json={"question": "Mean glucose?", "stream": False, "project_id": str(project_id)},
+    )
+    assert response.status_code == 200
+
+    async with AsyncSessionLocal() as db:
+        saved = (await db.execute(_our_queries())).scalars().one()
+        assert saved.project_id == project_id
+        await db.execute(delete(Project).where(Project.id == project_id))
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_unknown_project_is_rejected_before_the_agent_runs(client, fake_anthropic):
+    """A project the caller doesn't own must 404 up front. Letting it through
+    means paying Anthropic for an answer that then dies on the ai_queries
+    foreign key.
+    """
+    for stream in (False, True):
+        response = await client.post(
+            "/api/v1/agent/query",
+            json={
+                "question": "Mean glucose?",
+                "stream": stream,
+                "project_id": str(uuid.uuid4()),
+            },
+        )
+        # Streaming too: the check runs before the response starts, so this is
+        # a real status code rather than an error event mid-stream.
+        assert response.status_code == 404
+        assert response.json()["code"] == "PROJECT_NOT_FOUND"
+    assert fake_anthropic.calls == []
+
+    async with AsyncSessionLocal() as db:
+        assert (await db.execute(_our_queries())).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_stream_reports_errors_as_events_without_leaking_internals(client, monkeypatch):
     async def boom(*args, **kwargs):
-        raise RuntimeError("anthropic exploded")
+        raise RuntimeError("INSERT INTO ai_queries ... [parameters: (UUID('secret'),)]")
         yield  # pragma: no cover — makes this an async generator
 
     monkeypatch.setattr(orchestrator_module.AgentOrchestrator, "stream", boom)
@@ -231,4 +281,6 @@ async def test_stream_reports_errors_as_events(client, monkeypatch):
 
     assert response.status_code == 200
     assert events[-1]["type"] == "error"
-    assert "anthropic exploded" in events[-1]["detail"]
+    # Internal exception text can carry SQL, table names and bound parameters.
+    assert events[-1]["detail"] is None
+    assert "ai_queries" not in response.text

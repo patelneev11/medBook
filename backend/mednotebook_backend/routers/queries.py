@@ -11,6 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from ..database import AsyncSessionLocal, get_db
 from ..exceptions import AppException
+from ..models.project import Project
 from ..models.query import AIQuery
 from ..schemas.query import (
     AgentCitation,
@@ -69,6 +70,10 @@ async def agent_query(payload: AgentQueryRequest, db: AsyncSession = Depends(get
     answer as JSON once the agent is done.
     """
     conversation_id = payload.conversation_id or uuid.uuid4()
+    # Resolved before the response starts: once SSE is streaming there is no
+    # status code left to return, and an unowned project must not silently
+    # scope the agent's search.
+    await _verify_project(db, payload.project_id)
     project_id = str(payload.project_id) if payload.project_id else None
 
     if payload.stream:
@@ -136,13 +141,34 @@ async def _stream_agent(
                 {
                     "type": "error",
                     "message": "The agent hit an error while researching this question.",
-                    "detail": str(exc),
+                    # AppException messages are written for users; anything
+                    # else can carry SQL, table names and bound parameters,
+                    # so it stays in the log.
+                    "detail": exc.message if isinstance(exc, AppException) else None,
                 }
             )
 
 
 def _sse(event: dict) -> dict:
     return {"event": event["type"], "data": json.dumps(event)}
+
+
+async def _verify_project(db: AsyncSession, project_id: Optional[uuid.UUID]) -> None:
+    """404 unless the project exists and belongs to the caller.
+
+    Without this, an unknown id reaches the `ai_queries` insert and fails the
+    foreign key *after* the agent has already run.
+    """
+    if project_id is None:
+        return
+
+    result = await db.execute(
+        select(Project.id).where(
+            Project.id == project_id, Project.owner_id == _PLACEHOLDER_USER
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise AppException("Project not found", "PROJECT_NOT_FOUND", 404)
 
 
 async def _load_conversation_history(db: AsyncSession, conversation_id: uuid.UUID) -> list[dict]:
